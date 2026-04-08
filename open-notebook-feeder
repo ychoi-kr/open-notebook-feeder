@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""open-notebook-feeder — push sources into a self-hosted Open Notebook instance.
+
+All configuration comes from environment variables:
+
+  OPEN_NOTEBOOK_URL              base URL, e.g. http://192.0.2.10:5055
+  OPEN_NOTEBOOK_TOKEN            bearer token (server's OPEN_NOTEBOOK_PASSWORD)
+  OPEN_NOTEBOOK_DEFAULT_NOTEBOOK (optional) default notebook id for add-*
+
+No URL, IP, or credential is hardcoded. Uses stdlib only.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import mimetypes
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+ENV_URL = "OPEN_NOTEBOOK_URL"
+ENV_TOKEN = "OPEN_NOTEBOOK_TOKEN"
+ENV_DEFAULT_NB = "OPEN_NOTEBOOK_DEFAULT_NOTEBOOK"
+
+
+# ---------- helpers ----------
+
+def die(msg: str, code: int = 1) -> None:
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def get_base_url() -> str:
+    url = os.environ.get(ENV_URL)
+    if not url:
+        die(f"missing environment variable: {ENV_URL}")
+    return url.rstrip("/")
+
+
+def get_token() -> str:
+    token = os.environ.get(ENV_TOKEN)
+    if not token:
+        die(f"missing environment variable: {ENV_TOKEN}")
+    return token
+
+
+def resolve_notebook(arg_value: str | None) -> str:
+    nb = arg_value or os.environ.get(ENV_DEFAULT_NB)
+    if not nb:
+        die(f"notebook id required: pass --notebook or set ${ENV_DEFAULT_NB}")
+    return nb
+
+
+def build_multipart(fields: dict, files: list) -> tuple[bytes, str]:
+    """fields: {name: str}; files: [(name, filename, bytes, mime)]"""
+    boundary = "----openNotebookFeeder" + uuid.uuid4().hex
+    crlf = b"\r\n"
+    parts: list[bytes] = []
+    for name, value in fields.items():
+        parts.append(f"--{boundary}".encode())
+        parts.append(f'Content-Disposition: form-data; name="{name}"'.encode())
+        parts.append(b"")
+        parts.append(value.encode("utf-8") if isinstance(value, str) else value)
+    for name, filename, content, mime in files:
+        parts.append(f"--{boundary}".encode())
+        parts.append(
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"'.encode()
+        )
+        parts.append(f"Content-Type: {mime}".encode())
+        parts.append(b"")
+        parts.append(content)
+    parts.append(f"--{boundary}--".encode())
+    parts.append(b"")
+    return crlf.join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def http_request(
+    method: str,
+    path: str,
+    *,
+    body: bytes | None = None,
+    content_type: str | None = None,
+    with_auth: bool = True,
+    timeout: int = 300,
+) -> tuple[int, str]:
+    base = get_base_url()
+    headers: dict[str, str] = {}
+    if with_auth:
+        headers["Authorization"] = f"Bearer {get_token()}"
+    if content_type:
+        headers["Content-Type"] = content_type
+    req = urllib.request.Request(f"{base}{path}", method=method, headers=headers, data=body)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as e:
+        die(f"network error: {e.reason}")
+    return 0, ""  # unreachable
+
+
+def require_ok(status: int, body: str) -> None:
+    if status >= 300:
+        die(f"[HTTP {status}] {body}")
+
+
+def print_json(text: str) -> None:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        print(text)
+        return
+    print(json.dumps(parsed, indent=2, ensure_ascii=False))
+
+
+# ---------- commands ----------
+
+def cmd_health(_args) -> None:
+    status, body = http_request("GET", "/health", with_auth=False, timeout=30)
+    require_ok(status, body)
+    print(body)
+
+
+def cmd_auth_status(_args) -> None:
+    status, body = http_request("GET", "/api/auth/status", with_auth=False, timeout=30)
+    require_ok(status, body)
+    print_json(body)
+
+
+def cmd_notebooks(args) -> None:
+    status, body = http_request("GET", "/api/notebooks")
+    require_ok(status, body)
+    if args.raw:
+        print_json(body)
+        return
+    try:
+        items = json.loads(body)
+    except json.JSONDecodeError:
+        print(body)
+        return
+    for nb in items:
+        print(f"{nb.get('id', '')}\t{nb.get('name', '')}")
+
+
+def cmd_transformations(args) -> None:
+    status, body = http_request("GET", "/api/transformations")
+    require_ok(status, body)
+    if args.raw:
+        print_json(body)
+        return
+    try:
+        items = json.loads(body)
+    except json.JSONDecodeError:
+        print(body)
+        return
+    for t in items:
+        print(f"{t.get('id', '')}\t{t.get('name', '')}")
+
+
+def base_source_fields(args, notebook: str) -> dict:
+    fields = {
+        "notebook_id": notebook,
+        "embed": "true" if args.embed else "false",
+        "async_processing": "true" if args.async_ else "false",
+    }
+    if args.transformation:
+        fields["transformations"] = json.dumps(args.transformation)
+    return fields
+
+
+def post_source(fields: dict, files: list | None = None) -> None:
+    body, ct = build_multipart(fields, files or [])
+    status, resp = http_request("POST", "/api/sources", body=body, content_type=ct)
+    require_ok(status, resp)
+    print_json(resp)
+
+
+def cmd_add_text(args) -> None:
+    notebook = resolve_notebook(args.notebook)
+    with open(args.file, encoding="utf-8") as f:
+        content = f.read()
+    fields = base_source_fields(args, notebook)
+    fields.update({"type": "text", "title": args.title, "content": content})
+    post_source(fields)
+
+
+def cmd_add_link(args) -> None:
+    notebook = resolve_notebook(args.notebook)
+    fields = base_source_fields(args, notebook)
+    fields.update({"type": "link", "url": args.url})
+    if args.title:
+        fields["title"] = args.title
+    post_source(fields)
+
+
+def cmd_add_file(args) -> None:
+    notebook = resolve_notebook(args.notebook)
+    with open(args.path, "rb") as f:
+        content = f.read()
+    filename = os.path.basename(args.path)
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    fields = base_source_fields(args, notebook)
+    fields["type"] = "upload"
+    if args.title:
+        fields["title"] = args.title
+    post_source(fields, [("file", filename, content, mime)])
+
+
+def cmd_status(args) -> None:
+    enc = urllib.parse.quote(args.source_id, safe="")
+    status, body = http_request("GET", f"/api/sources/{enc}/status")
+    require_ok(status, body)
+    print_json(body)
+
+
+# ---------- arg parser ----------
+
+def add_common_source_args(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument(
+        "--notebook",
+        help=f"notebook id (default: ${ENV_DEFAULT_NB})",
+    )
+    sp.add_argument(
+        "--no-embed",
+        dest="embed",
+        action="store_false",
+        default=True,
+        help="disable embedding (default: enabled)",
+    )
+    sp.add_argument(
+        "--sync",
+        dest="async_",
+        action="store_false",
+        default=True,
+        help="disable async_processing (server waits inline; default: async)",
+    )
+    sp.add_argument(
+        "--transformation",
+        action="append",
+        default=None,
+        metavar="TRANSFORMATION_ID",
+        help="apply transformation (repeatable)",
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="open-notebook-feeder",
+        description="Push sources into a self-hosted Open Notebook instance.",
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("health", help="server health check (no auth)").set_defaults(func=cmd_health)
+    sub.add_parser("auth-status", help="check whether auth is enabled").set_defaults(func=cmd_auth_status)
+
+    pn = sub.add_parser("notebooks", help="list notebooks")
+    pn.add_argument("--raw", action="store_true", help="raw JSON output")
+    pn.set_defaults(func=cmd_notebooks)
+
+    pt = sub.add_parser("transformations", help="list transformations")
+    pt.add_argument("--raw", action="store_true", help="raw JSON output")
+    pt.set_defaults(func=cmd_transformations)
+
+    pat = sub.add_parser("add-text", help="add a text source from a markdown/text file")
+    pat.add_argument("title")
+    pat.add_argument("file")
+    add_common_source_args(pat)
+    pat.set_defaults(func=cmd_add_text)
+
+    pal = sub.add_parser("add-link", help="add a link source (server fetches the URL)")
+    pal.add_argument("url")
+    pal.add_argument("--title", default=None)
+    add_common_source_args(pal)
+    pal.set_defaults(func=cmd_add_link)
+
+    paf = sub.add_parser("add-file", help="upload a file source (PDF/DOCX/MP3/...)")
+    paf.add_argument("path")
+    paf.add_argument("--title", default=None)
+    add_common_source_args(paf)
+    paf.set_defaults(func=cmd_add_file)
+
+    ps = sub.add_parser("status", help="check processing status of a source")
+    ps.add_argument("source_id", help="e.g., source:abc123...")
+    ps.set_defaults(func=cmd_status)
+
+    return p
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
