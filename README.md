@@ -1,79 +1,95 @@
 # open-notebook-feeder
 
-셀프호스팅 [Open Notebook](https://github.com/lfnovo/open-notebook) 인스턴스에 소스(마크다운/링크/파일)를 밀어 넣는 개인용 CLI. 비공식 도구이며, Open Notebook 공식 프로젝트와 관계 없다.
+A small, personal CLI for pushing sources (markdown, links, files) into a
+self-hosted [Open Notebook](https://github.com/lfnovo/open-notebook) instance.
+Unofficial — no affiliation with the Open Notebook project.
 
-- 파이썬 표준 라이브러리만 사용. 설치할 의존성 없음.
-- URL·토큰·기본 노트북 ID는 **전부 환경변수**로 주입. 코드나 커밋에 하드코딩 금지.
-- 주 용도: wikidocs에서 뽑은 마크다운, PDF, 외부 링크를 Open Notebook 노트북에 일괄 주입.
+> 한국어 문서: [README.ko.md](README.ko.md)
 
-## 환경변수
+- Python standard library only. No dependencies to install.
+- URL, token, and default notebook id all come from **environment variables**.
+  Nothing is hardcoded in the source or committed to the repo.
+- Bulk-injects markdown text, external links, and files (PDF/DOCX/MP3/…)
+  into a notebook.
 
-| 변수 | 필수 | 설명 |
+## Environment variables
+
+| Variable | Required | Description |
 |---|---|---|
-| `OPEN_NOTEBOOK_URL` | ✓ | 베이스 URL. 예: `http://192.0.2.10:5055` 또는 `https://open-notebook.example.com`. 끝에 `/api` 붙이지 말 것 |
-| `OPEN_NOTEBOOK_TOKEN` | ✓ | Bearer 토큰 (서버의 `OPEN_NOTEBOOK_PASSWORD`) |
-| `OPEN_NOTEBOOK_DEFAULT_NOTEBOOK` | | `add-*` 서브커맨드의 기본 노트북 id. 예: `notebook:abcd1234...` |
+| `OPEN_NOTEBOOK_URL` | ✓ | Base URL, e.g. `http://192.0.2.10:5055` or `https://open-notebook.example.com`. Do **not** append `/api`. |
+| `OPEN_NOTEBOOK_TOKEN` | ✓ | Bearer token (the server's `OPEN_NOTEBOOK_PASSWORD`). |
+| `OPEN_NOTEBOOK_DEFAULT_NOTEBOOK` | | Default notebook id for `add-*` subcommands, e.g. `notebook:abcd1234...`. |
 
-`.zshrc`/`.bashrc`에 export해 두거나, 실행 직전에 인라인으로 넘긴다.
+Export them in `.zshrc`/`.bashrc`, or pass them inline when invoking the CLI.
 
-## 설치
+## Install
 
 ```bash
-git clone <repo-url> ~/open-notebook-feeder
+git clone https://github.com/ychoi-kr/open-notebook-feeder.git ~/open-notebook-feeder
 chmod +x ~/open-notebook-feeder/open-notebook-feeder
-# PATH 편의용 심볼릭 링크 (선택)
+# Optional: symlink for PATH convenience
 ln -s ~/open-notebook-feeder/open-notebook-feeder ~/bin/open-notebook-feeder
 ```
 
-## 사용법
+## Usage
 
 ```bash
-# 서버 상태
+# Server status
 open-notebook-feeder health
 open-notebook-feeder auth-status
 
-# 리소스 조회
+# List resources
 open-notebook-feeder notebooks
 open-notebook-feeder transformations
 
-# 마크다운 파일을 텍스트 소스로 추가
+# Add a markdown/text file as a text source
 open-notebook-feeder add-text "Effective Python ch.3" ./ch3.md
 
-# URL을 링크 소스로 추가 (서버가 직접 fetch — JS/로그인 사이트는 안 됨)
-open-notebook-feeder add-link https://example.com/article --title "기사 제목"
+# Add a URL as a link source (the server fetches it)
+open-notebook-feeder add-link https://example.com/article --title "Article title"
 
-# PDF/DOCX/MP3 업로드
-open-notebook-feeder add-file ./document.pdf --title "문서 제목"
+# Upload a PDF/DOCX/MP3/… as a file source
+open-notebook-feeder add-file ./document.pdf --title "Document title"
 
-# 처리 상태 확인 (비동기 처리 시)
+# Check processing status (for async sources)
 open-notebook-feeder status "source:abcdef..."
 ```
 
-### 옵션
+### Options
 
-모든 `add-*` 서브커맨드에 공통:
+Common to all `add-*` subcommands:
 
-- `--notebook NOTEBOOK_ID` — 기본값을 override. 없으면 `$OPEN_NOTEBOOK_DEFAULT_NOTEBOOK` 사용
-- `--no-embed` — 임베딩 비활성화
-- `--sync` — `async_processing=false`로 호출 (서버가 끝날 때까지 대기)
-- `--transformation TRANSFORMATION_ID` — 변환 적용. 반복 사용 가능
+- `--notebook NOTEBOOK_ID` — override the default notebook. Falls back to
+  `$OPEN_NOTEBOOK_DEFAULT_NOTEBOOK` when omitted.
+- `--no-embed` — disable embedding (enabled by default).
+- `--sync` — send `async_processing=false` so the server finishes before
+  responding (async by default).
+- `--transformation TRANSFORMATION_ID` — apply a transformation. Repeatable.
 
-### 예: 다른 노트북에 여러 변환 적용
+### Example: multiple transformations on a specific notebook
 
 ```bash
-open-notebook-feeder add-text "논문 제목" ./paper.md \
+open-notebook-feeder add-text "Paper title" ./paper.md \
   --notebook notebook:xxxx... \
   --transformation transformation:dense_summary \
   --transformation transformation:key_insights
 ```
 
-## 함정
+## Notes and gotchas
 
-- **multipart/form-data 필수**: `POST /api/sources`는 JSON body를 받지 않는다. 이 CLI는 자동으로 처리하지만, curl로 직접 칠 때는 `-F` 사용.
-- **bool은 문자열로**: 서버는 `embed`/`async_processing`을 `"true"`/`"false"` 문자열로 받는다. CLI가 이미 변환해 준다.
-- **링크 소스의 한계**: Open Notebook 의 URL fetcher는 로그인·JS 렌더링·anti-bot 사이트(wikidocs.net 포함)에서 실패한다. 외부에서 마크다운으로 먼저 추출한 뒤 `add-text`로 주입할 것.
-- **토큰 URL-인코딩 금지**: 특수문자가 있어도 Authorization 헤더 값은 그대로 넘긴다.
+- **multipart/form-data is required**: `POST /api/sources` does not accept a
+  JSON body. This CLI handles that for you; if you hit the endpoint with curl,
+  use `-F`.
+- **Booleans are strings**: the server expects `embed` and `async_processing`
+  as the literal strings `"true"`/`"false"`. The CLI converts them for you.
+- **`add-link` only forwards the URL**: the actual fetching is done by the
+  Open Notebook server. If the server's fetcher can reach the site, `add-link`
+  is all you need. Sites that require login, heavy JS rendering, or have
+  anti-bot protection may fail on the server side — working around that
+  (external extraction, etc.) is outside this tool's scope.
+- **Do not URL-encode the token**: even when it contains special characters,
+  the Authorization header value is passed through verbatim.
 
-## 라이선스
+## License
 
-개인용. 보증 없음.
+Personal use. No warranty.
