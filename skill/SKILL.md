@@ -76,8 +76,25 @@ curl -s -X DELETE \
   "$OPEN_NOTEBOOK_URL/api/..."
 ```
 
-출력 파싱: `| python -m json.tool`  
-(**`python3` 아닌 `python`** — 이 PC에서 python3는 Microsoft Store alias)
+**출력 파싱 및 Windows 인코딩 주의사항:**
+
+Windows에서 curl 응답에 한글이 포함된 경우 터미널 기본 인코딩(cp949)으로 인해 파이프 파싱 시 UnicodeEncodeError가 발생할 수 있다.
+
+```bash
+# 안전한 패턴: 파일로 저장 후 처리
+curl -s -H "Authorization: Bearer $OPEN_NOTEBOOK_TOKEN" \
+  "$OPEN_NOTEBOOK_URL/api/..." > /tmp/out.json
+# → Read 툴로 읽거나, python 파싱 시 PYTHONIOENCODING=utf-8 적용
+
+# 파이프로 바로 파싱할 때
+PYTHONIOENCODING=utf-8 python -c "
+import sys, json
+data = json.load(sys.stdin)
+# 처리...
+" < /tmp/out.json
+```
+
+응답이 크거나(full_text 포함 소스 등) 한글이 포함된 경우엔 **파일 저장 후 Read 툴로 읽는 것**이 가장 안정적이다.
 
 ---
 
