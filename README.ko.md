@@ -2,11 +2,12 @@
 
 > English: [README.md](README.md)
 
-셀프호스팅 [Open Notebook](https://github.com/lfnovo/open-notebook) 인스턴스에 소스(마크다운/링크/파일)를 밀어 넣는 개인용 CLI. 비공식 도구이며, Open Notebook 공식 프로젝트와 관계 없다.
+셀프호스팅 [Open Notebook](https://github.com/lfnovo/open-notebook) 인스턴스에 소스(마크다운/링크/파일)를 밀어 넣는 개인용 CLI, 그리고 같은 서버의 나머지 API를 직접 호출해 처리하는 [Claude Code](https://claude.ai/code) 스킬. 비공식 도구이며, Open Notebook 공식 프로젝트와 관계 없다.
 
 - 파이썬 표준 라이브러리만 사용. 설치할 의존성 없음.
 - URL·토큰·기본 노트북 ID는 **전부 환경변수**로 주입. 코드나 커밋에 하드코딩 금지.
 - 마크다운 텍스트, 외부 링크, 파일(PDF/DOCX/MP3 등)을 Open Notebook 노트북에 일괄 주입.
+- 확장 계획 (자세한 내용은 [SPEC.md](SPEC.md)): 번거로운 유틸(`doctor`, `alias`, `--wait`, 바이너리 다운로드)만 CLI에 남기고, 나머지(노트북/노트/채팅/검색/팟캐스트/인사이트)는 스킬이 API를 직접 호출해 처리한다.
 
 ## 환경변수
 
@@ -75,6 +76,22 @@ open-notebook-feeder add-text "논문 제목" ./paper.md \
 - **bool은 문자열로**: 서버는 `embed`/`async_processing`을 `"true"`/`"false"` 문자열로 받는다. CLI가 이미 변환해 준다.
 - **`add-link`는 URL만 넘긴다**: 실제 fetch는 Open Notebook 서버가 담당한다. 서버 fetcher가 가져올 수 있는 사이트라면 `add-link` 하나로 끝난다. 로그인·JS 렌더링·anti-bot 등으로 서버가 가져오지 못하는 경우엔 실패 응답이 오는데, 그 우회(외부 추출 등)는 이 CLI의 범위 밖이다.
 - **토큰 URL-인코딩 금지**: 특수문자가 있어도 Authorization 헤더 값은 그대로 넘긴다.
+
+## Claude Code 스킬
+
+저장소 안의 [`skill/SKILL.md`](skill/SKILL.md)에 동봉된 스킬이 Claude Code가 Open Notebook을 다룰 때 CLI와 API 직접 호출을 어떻게 나눌지 안내한다. CLI가 맡는 일은 multipart 업로드·상태 폴링·바이너리 다운로드·환경 점검이고, 나머지(노트북/노트/채팅/검색/인사이트/팟캐스트의 조회·생성·수정·삭제)는 스킬이 curl로 직접 API를 호출한다.
+
+Claude Code를 쓰는 컴퓨터에서 설치:
+
+```bash
+ln -s ~/open-notebook-feeder/skill ~/.claude/skills/open-notebook-feeder
+```
+
+스킬은 CLI와 같은 `OPEN_NOTEBOOK_*` 환경변수를 그대로 읽는다. 별도 설정 없음.
+
+## 범위와 로드맵
+
+[SPEC.md](SPEC.md)에 "CLI는 작게, 스킬이 폭을 담당"하는 결정을 정리해 뒀다. 이 리포를 처음 보면서 "왜 CLI에 `chat`이나 `search`가 없지?"라는 의문이 든다면 답은 거기 있다 — 그건 스킬이 맡고, CLI에는 넣지 않는다.
 
 ## 라이선스
 

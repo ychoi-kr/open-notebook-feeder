@@ -1,8 +1,10 @@
 # open-notebook-feeder
 
 A small, personal CLI for pushing sources (markdown, links, files) into a
-self-hosted [Open Notebook](https://github.com/lfnovo/open-notebook) instance.
-Unofficial — no affiliation with the Open Notebook project.
+self-hosted [Open Notebook](https://github.com/lfnovo/open-notebook) instance,
+plus a companion [Claude Code](https://claude.ai/code) skill that handles the
+rest of the server's API via direct calls. Unofficial — no affiliation with
+the Open Notebook project.
 
 > 한국어 문서: [README.ko.md](README.ko.md)
 
@@ -11,6 +13,10 @@ Unofficial — no affiliation with the Open Notebook project.
   Nothing is hardcoded in the source or committed to the repo.
 - Bulk-injects markdown text, external links, and files (PDF/DOCX/MP3/…)
   into a notebook.
+- Planned expansion (see [SPEC.md](SPEC.md)): a small set of "fiddly" helpers
+  — `doctor`, `alias`, `--wait`, binary download — stays in the CLI. Everything
+  else (notebook/note/chat/search/podcast/insight) is handled by the skill
+  calling the API directly.
 
 ## Environment variables
 
@@ -89,6 +95,29 @@ open-notebook-feeder add-text "Paper title" ./paper.md \
   (external extraction, etc.) is outside this tool's scope.
 - **Do not URL-encode the token**: even when it contains special characters,
   the Authorization header value is passed through verbatim.
+
+## Claude Code skill
+
+A companion skill lives in [`skill/SKILL.md`](skill/SKILL.md). It teaches
+Claude Code when to use the CLI (multipart uploads, status polling, binary
+downloads, env checks) and when to hit the API directly (notebook/note/chat/
+search/insight/podcast queries and mutations).
+
+Install on a machine where you run Claude Code:
+
+```bash
+ln -s ~/open-notebook-feeder/skill ~/.claude/skills/open-notebook-feeder
+```
+
+The skill reads the same `OPEN_NOTEBOOK_*` environment variables as the CLI.
+Nothing else to configure.
+
+## Scope and roadmap
+
+[SPEC.md](SPEC.md) records the decision to keep the CLI small and push
+breadth into the skill. If you're reading this repo for the first time and
+wondering "why doesn't the CLI have `chat` or `search`?" — that's why. Those
+live in the skill, not here.
 
 ## License
 
