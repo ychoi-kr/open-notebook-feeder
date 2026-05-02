@@ -105,12 +105,14 @@ data = json.load(sys.stdin)
 | METHOD | 경로 | 주요 body 필드 |
 |---|---|---|
 | GET | `/api/notebooks` | — |
-| POST | `/api/notebooks` | `name`, `description` |
+| POST | `/api/notebooks` | `name`, `description` (둘 다 필수) |
 | GET | `/api/notebooks/{id}` | — |
 | PUT | `/api/notebooks/{id}` | `name`, `description`, `archived` |
 | DELETE | `/api/notebooks/{id}` | — |
 | POST | `/api/notebooks/{id}/sources/{source_id}` | — (소스 연결) |
 | DELETE | `/api/notebooks/{id}/sources/{source_id}` | — (소스 연결 해제) |
+
+`POST /api/notebooks`는 `name`만 보내면 `{"detail":"There was an error parsing the body"}` 응답이 온다. `description`은 빈 문자열이라도 함께 보내야 한다.
 
 #### 소스 (Sources) — 업로드·다운로드는 CLI
 
@@ -142,6 +144,23 @@ data = json.load(sys.stdin)
 | GET | `/api/insights/{id}` | — |
 | POST | `/api/insights/{id}/save-as-note` | — |
 | DELETE | `/api/insights/{id}` | — |
+
+**인사이트 처리 방식:**
+
+- 소스 업로드 후 인사이트는 **자동 생성되지 않는다.** `GET /api/sources/{id}/insights`가 빈 배열인 것이 정상. 인사이트가 필요하면 `POST /api/sources/{id}/insights`로 transformation을 명시적으로 실행해야 한다.
+- 생성된 인사이트는 **임베딩되어 검색·채팅에 자동으로 활용된다.** 따라서 `save-as-note`로 노트로 복사하는 건 보통 중복일 뿐, 검색 가능성을 늘리지 않는다. **외부로 내보내거나 편집이 필요할 때만** `save-as-note`를 쓴다.
+- transformation은 LLM 호출이라 **수 분 걸린다**. `POST` 응답은 즉시 `pending` + `command_id` 반환. 진행 상황은 `GET /api/commands/jobs/{command_id}`로 확인 (Commands 섹션 참조).
+- 기본 transformation 프롬프트는 **소스 언어와 무관하게 영어로 인사이트를 생성**할 수 있다. 한국어 결과가 필요하면 사용자에게 미리 알리고, custom transformation 사용 또는 프롬프트 수정을 안내한다.
+
+#### Commands (비동기 작업 추적)
+
+| METHOD | 경로 | 설명 |
+|---|---|---|
+| GET | `/api/commands/jobs` | 작업 목록 |
+| GET | `/api/commands/jobs/{job_id}` | 작업 상태 조회 |
+| DELETE | `/api/commands/jobs/{job_id}` | 작업 취소 |
+
+`status` 필드: `pending → running → completed/failed`. 인사이트 생성, 임베딩 재구축, 팟캐스트 생성 등 비동기 LLM 작업의 진행을 추적할 때 사용.
 
 #### 채팅 (Chat)
 
