@@ -9,8 +9,8 @@ description: 사용자의 셀프호스팅 Open Notebook 인스턴스를 조작�
 
 1. **역할 분담: CLI가 더 안전한 자리는 CLI, 나머지는 curl.**  
    multipart 업로드·바이너리 다운로드·클라이언트 측 폴링은 CLI, 단순 GET·JSON POST는 curl로 직접 호출.
-2. **URL·IP·토큰을 본문에 적지 않는다.** 전부 환경변수에서 조립.
-3. **환경변수가 없으면 멈추고 안내한다.** 추정·하드코딩 금지.
+2. **URL·IP·토큰을 어디에도 적지 않는다.** 명령어·코드·주석·출력 전부 금지. 항상 환경변수(`$OPEN_NOTEBOOK_URL`, `$OPEN_NOTEBOOK_TOKEN`)로만 참조.
+3. **환경변수가 없으면 값을 직접 넣지 말고 멈춘다.** curl이 401/연결 오류로 실패하거나 변수가 비어 있으면 사용자에게 설정을 요청하고 작업 중단. 값을 추정하거나 하드코딩 절대 금지.
 
 ## 환경변수 / 연결 확인
 
@@ -20,15 +20,12 @@ description: 사용자의 셀프호스팅 Open Notebook 인스턴스를 조작�
 | `OPEN_NOTEBOOK_TOKEN` | ✓ | Bearer 토큰 |
 | `OPEN_NOTEBOOK_DEFAULT_NOTEBOOK` | | `add-*`의 기본 노트북 id |
 
-세션 시작 전 한 번에 점검:
-```bash
-open-notebook-feeder doctor
-```
-필수 변수가 비어 있으면 아래 안내 후 **작업 멈춤**:
-> `OPEN_NOTEBOOK_URL`, `OPEN_NOTEBOOK_TOKEN` 환경변수가 필요합니다. 세션에 export 후 다시 요청해 주세요.
+환경변수는 설정되어 있다고 가정하고 바로 사용한다. 값을 출력하거나 확인하지 않는다. curl 호출이 401/연결 오류로 실패할 때만 환경변수 미설정을 안내한다.
 
-**실행**: `open-notebook-feeder <subcommand>` (PATH에 있는 경우)  
-PATH에 없으면 clone 디렉터리의 절대경로로 직접 호출한다. 설치 방법은 리포 README 참조.
+**실행**: CLI는 PATH에 없음 — 반드시 절대 경로로 호출:
+```bash
+~/Documents/GitHub/open-notebook-feeder/open-notebook-feeder <subcommand>
+```
 
 ---
 
@@ -36,14 +33,20 @@ PATH에 없으면 clone 디렉터리의 절대경로로 직접 호출한다. 설
 
 | 작업 | CLI 커맨드 |
 |---|---|
-| 텍스트/링크/파일 소스 추가 | `add-text`, `add-link`, `add-file [--wait]` |
-| 소스 처리 완료까지 폴링 | `source wait <source-id>` |
-| 소스 파일 다운로드 | `source download <source-id>` |
-| 팟캐스트 생성 완료까지 폴링 | `podcast wait <job-id>` |
-| 팟캐스트 오디오 다운로드 | `podcast download <episode-id>` |
-| 환경 전체 점검 | `doctor` |
+| 파일 소스 추가 | `add-file [--notebook <id>] [--sync] <path>` |
+| 텍스트/링크 소스 추가 | `add-text`, `add-link` |
+| 소스 처리 상태 1회 조회 | `status <source-id>` |
 | 노트북·transformation 목록 (편의) | `notebooks`, `transformations` |
-| id alias 관리 | `alias set/list/get/rm` |
+
+```bash
+# add-file 올바른 사용법
+~/Documents/GitHub/open-notebook-feeder/open-notebook-feeder add-file \
+  --notebook notebook:xxx \
+  "/path/to/file.mp3"
+```
+
+> `--notebook` (not `--notebook-id`): 노트북 ID 지정. 생략 시 `$OPEN_NOTEBOOK_DEFAULT_NOTEBOOK` 사용.  
+> `--sync`: 서버가 처리 완료까지 인라인 대기 (기본은 async). 폴링이 필요하면 `status` 반복 호출 또는 `GET /api/sources/{id}` 루프 사용.
 
 ---
 
@@ -78,20 +81,21 @@ curl -s -X DELETE \
 
 **출력 파싱 및 Windows 인코딩 주의사항:**
 
-Windows에서 curl 응답에 한글이 포함된 경우 터미널 기본 인코딩(cp949)으로 인해 파이프 파싱 시 UnicodeEncodeError가 발생할 수 있다.
+- **curl은 반드시 Bash 도구에서 호출한다.** PowerShell 도구에서 `curl`은 `Invoke-WebRequest`의 별칭이라 파라미터가 완전히 다르다.
+- 한글이 포함된 응답을 파이프로 직접 파싱하면 `UnicodeEncodeError` 발생. 파일로 저장 후 처리한다.
 
 ```bash
-# 안전한 패턴: 파일로 저장 후 처리
+# 안전한 패턴: 파일로 저장 후 처리 (Bash 도구에서 실행)
 curl -s -H "Authorization: Bearer $OPEN_NOTEBOOK_TOKEN" \
-  "$OPEN_NOTEBOOK_URL/api/..." > /tmp/out.json
+  "$OPEN_NOTEBOOK_URL/api/..." > "$TEMP/out.json"
 # → Read 툴로 읽거나, python 파싱 시 PYTHONIOENCODING=utf-8 적용
 
-# 파이프로 바로 파싱할 때
 PYTHONIOENCODING=utf-8 python -c "
-import sys, json
-data = json.load(sys.stdin)
+import json
+with open('$TEMP/out.json', encoding='utf-8') as f:
+    data = json.load(f)
 # 처리...
-" < /tmp/out.json
+"
 ```
 
 응답이 크거나(full_text 포함 소스 등) 한글이 포함된 경우엔 **파일 저장 후 Read 툴로 읽는 것**이 가장 안정적이다.
@@ -114,11 +118,11 @@ data = json.load(sys.stdin)
 
 `POST /api/notebooks`는 `name`만 보내면 `{"detail":"There was an error parsing the body"}` 응답이 온다. `description`은 빈 문자열이라도 함께 보내야 한다.
 
-#### 소스 (Sources) — 업로드·다운로드는 CLI
+#### 소스 (Sources) — 업로드는 CLI
 
 | METHOD | 경로 | 주요 body 필드 |
 |---|---|---|
-| GET | `/api/sources` | — |
+| GET | `/api/sources` | — (쿼리: `?notebook_id=notebook:xxx` 로 필터링 가능) |
 | GET | `/api/sources/{id}` | — |
 | PUT | `/api/sources/{id}` | `title`, `topics` |
 | DELETE | `/api/sources/{id}` | — |
@@ -192,7 +196,7 @@ data = json.load(sys.stdin)
 | DELETE | `/api/transformations/{id}` | — |
 | POST | `/api/transformations/execute` | `transformation_id`, `input_text`, `model_id` |
 
-#### 팟캐스트 (Podcasts) — 다운로드·wait는 CLI
+#### 팟캐스트 (Podcasts)
 
 | METHOD | 경로 | 주요 body 필드 |
 |---|---|---|
@@ -255,13 +259,14 @@ curl -s -X POST \
   -d '{"query": "항력 계수", "limit": 10, "search_sources": true, "search_notes": true}' \
   "$OPEN_NOTEBOOK_URL/api/search"
 
-# 팟캐스트 생성 후 CLI로 대기
-JOB=$(curl -s -X POST \
+# 팟캐스트 생성 후 job_id로 상태 조회
+curl -s "$TEMP/podcast_job.json" > "$TEMP/podcast_job.json" || true
+curl -s -X POST \
   -H "Authorization: Bearer $OPEN_NOTEBOOK_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"episode_name": "에피소드명", "notebook_id": "notebook:...", "episode_profile": "default", "speaker_profile": "default"}' \
-  "$OPEN_NOTEBOOK_URL/api/podcasts/generate" | python -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
-open-notebook-feeder podcast wait "$JOB"
+  "$OPEN_NOTEBOOK_URL/api/podcasts/generate" > "$TEMP/podcast_job.json"
+# job_id 확인 후 GET /api/podcasts/jobs/{job_id} 로 폴링
 ```
 
 ---
@@ -271,7 +276,8 @@ open-notebook-feeder podcast wait "$JOB"
 - **노트북 id 모를 때**: `notebooks` 커맨드(CLI) 또는 `GET /api/notebooks`로 목록 확인 후 사용자에게 물어본다. 임의 선택 금지.
 - **일괄 작업**: 첫 건 실행해 정상 응답 확인 후 나머지 진행. 에러 상태로 대량 전송 금지.
 - **transformation 선택**: `transformations` 커맨드로 목록 뽑아 사용자 확인 후 적용. 이름 추측 금지.
-- **MP3 등 STT 소스**: 업로드 후 서버 워커가 수 분 처리. `source wait`으로 폴링하거나 처리 시간을 사용자에게 안내.
+- **MP3 등 STT 소스 — 업로드 응답만으로 성공이라 단정하지 않는다.** 업로드 응답은 `status: new` (큐 진입 신호)일 뿐, 실제 처리는 비동기로 STT → 임베딩이 진행된다. STT 서비스가 죽어 있으면 `status: failed` + `error: "Failed to transcribe audio: ..."`로 끝난다. 일괄 업로드 시 응답만 보고 "다 올렸습니다" 라고 보고하면 사용자가 며칠 뒤 빈 transcript를 발견한다. **반드시 `status <source-id>` 또는 `GET /api/sources/{id}`로 `status: completed` + `embedded_chunks > 0` 확인 후 보고한다.**
+- **`failed` 상태의 소스 retry 한계**: `POST /api/sources/{id}/retry`가 "Source is not associated with any notebooks"로 거부될 수 있다(서버 측 캐시·연결 상태 불일치 추정). 노트북에 다시 link해도 같은 에러가 반복되면 **소스 삭제 후 재업로드**로 우회한다.
 - **스트리밍 채팅**: curl `-N` 플래그 필요 (`curl -s -N -X POST ...`).
 
 ## 금지 사항
